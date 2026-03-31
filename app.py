@@ -216,3 +216,78 @@ if submit:
 
     st.subheader("📊 Furnace Pressure Prediction")
     st.metric("FP (Predicted)", round(pred_fp, 2))
+    # =========================================================
+# OPTIMASI DAMPER (REAL RECOMMENDATION)
+# =========================================================
+
+st.subheader("🎯 Rekomendasi Bukaan Damper")
+
+target_fp = -100  # bisa kamu jadikan slider nanti
+
+best_score = 999
+best_a = None
+best_b = None
+best_fp = None
+
+for a in np.linspace(40, 90, 20):
+    for b in np.linspace(40, 90, 20):
+
+        temp = input_data.copy()
+
+        # simulasi perubahan current
+        if idf_a_vane_input != 0:
+            temp["idf_a_current"] = idf_a_current * (a / idf_a_vane_input)
+
+        if idf_b_vane_input != 0:
+            temp["idf_b_current"] = idf_b_current * (b / idf_b_vane_input)
+
+        # update feature turunan
+        temp["total_idf_current"] = temp["idf_a_current"] + temp["idf_b_current"]
+        temp["idf_total_vane"] = a + b
+        temp["air_per_idf"] = airflow / (temp["idf_total_vane"] + 1)
+        temp["current_ratio"] = temp["idf_a_current"] / (temp["idf_b_current"] + 1)
+
+        # prediksi FP
+        pred_sim = rf.predict(temp)[0]
+
+        # =====================
+        # OBJECTIVE FUNCTION
+        # =====================
+        penalty = 0
+
+        # target FP
+        penalty += abs(pred_sim - target_fp) * 2
+
+        # safety constraint
+        if pred_sim > -50:
+            penalty += 500  # bahaya tekanan positif
+
+        if pred_sim < -250:
+            penalty += 100
+
+        # balance A & B
+        penalty += abs(a - b) * 0.5
+
+        # minim perubahan (real plant constraint)
+        penalty += abs(a - idf_a_vane_input) * 0.3
+        penalty += abs(b - idf_b_vane_input) * 0.3
+
+        if penalty < best_score:
+            best_score = penalty
+            best_a = a
+            best_b = b
+            best_fp = pred_sim
+
+# =========================================================
+# OUTPUT
+# =========================================================
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    st.metric("IDF A Optimal (%)", round(best_a, 2))
+
+with col2:
+    st.metric("IDF B Optimal (%)", round(best_b, 2))
+
+with col3:
+    st.metric("FP Prediksi Setelah Optimasi", round(best_fp, 2))

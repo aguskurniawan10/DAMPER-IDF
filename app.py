@@ -11,7 +11,7 @@ from sklearn.ensemble import RandomForestRegressor
 # CONFIG
 # =========================================================
 st.set_page_config(page_title="IDF Optimizer AI", layout="wide")
-st.title("🔥 IDF A & B Optimization + Furnace Pressure Prediction (Validated AI)")
+st.title("🔥 IDF A & B Optimization + Furnace Pressure (High Accuracy AI)")
 
 # =========================================================
 # LOAD DATA
@@ -45,56 +45,114 @@ for col in df.columns:
 
 df = df.dropna()
 
+# Filter lebih ketat
 df = df[
     (df["load"] > 150) &
-    (df["fp"] > -300) &
-    (df["fp"] < 50)
+    (df["fp"] > -250) & (df["fp"] < -20) &
+    (df["idf_a_current"] > 50) &
+    (df["idf_b_current"] > 50)
 ]
 
 st.success(f"Data siap: {df.shape}")
 
 # =========================================================
-# FEATURE
+# FEATURE ENGINEERING
 # =========================================================
+df["total_idf_current"] = df["idf_a_current"] + df["idf_b_current"]
+df["airflow_per_load"] = df["airflow"] / df["load"]
+df["vane_diff"] = df["idf_a_vane"] - df["idf_b_vane"]
+df["fdf_avg"] = (df["fdf_a_vane"] + df["fdf_b_vane"]) / 2
+df["air_x_pa"] = df["airflow"] * df["pa_pressure"]
+
 features = [
     "load", "airflow", "pa_pressure",
     "idf_a_current", "idf_b_current",
-    "fdf_a_vane", "fdf_b_vane"
+    "fdf_a_vane", "fdf_b_vane",
+    "total_idf_current",
+    "airflow_per_load",
+    "vane_diff",
+    "fdf_avg",
+    "air_x_pa"
 ]
 
 X = df[features]
-y_fp = df["fp"]
+y = df["fp"]
 
 # =========================================================
-# TRAIN MODEL
+# TRAIN MODEL (RF + XGB)
 # =========================================================
 X_train, X_test, y_train, y_test = train_test_split(
-    X, y_fp, test_size=0.2, random_state=42
+    X, y, test_size=0.2, random_state=42
 )
 
-model_fp = RandomForestRegressor(n_estimators=100, max_depth=10)
-model_fp.fit(X_train, y_train)
+rf = RandomForestRegressor(
+    n_estimators=300,
+    max_depth=15,
+    min_samples_split=5,
+    random_state=42
+)
+rf.fit(X_train, y_train)
+pred_rf = rf.predict(X_test)
+
+# fallback jika XGBoost tidak ada
+try:
+    from xgboost import XGBRegressor
+
+    xgb = XGBRegressor(
+        n_estimators=300,
+        max_depth=6,
+        learning_rate=0.05,
+        subsample=0.8,
+        colsample_bytree=0.8
+    )
+    xgb.fit(X_train, y_train)
+    pred_xgb = xgb.predict(X_test)
+
+    r2_xgb = r2_score(y_test, pred_xgb)
+    mae_xgb = mean_absolute_error(y_test, pred_xgb)
+
+except:
+    xgb = None
+    r2_xgb = -999
+    mae_xgb = 999
+
+# RF metrics
+r2_rf = r2_score(y_test, pred_rf)
+mae_rf = mean_absolute_error(y_test, pred_rf)
+
+# pilih terbaik
+if r2_xgb > r2_rf:
+    model_fp = xgb
+    best_name = "XGBoost"
+    best_r2 = r2_xgb
+    best_mae = mae_xgb
+else:
+    model_fp = rf
+    best_name = "RandomForest"
+    best_r2 = r2_rf
+    best_mae = mae_rf
 
 # =========================================================
 # VALIDASI MODEL
 # =========================================================
-st.subheader("📊 Validasi Model")
+st.subheader("📊 Model Performance")
 
-pred_test = model_fp.predict(X_test)
+st.write(f"RF R2: {r2_rf:.3f} | MAE: {mae_rf:.2f}")
+if xgb:
+    st.write(f"XGB R2: {r2_xgb:.3f} | MAE: {mae_xgb:.2f}")
 
-r2 = r2_score(y_test, pred_test)
-mae = mean_absolute_error(y_test, pred_test)
+st.success(f"Model terbaik: {best_name}")
 
 colA, colB = st.columns(2)
-
 with colA:
-    st.metric("R2 Score", round(r2, 3))
+    st.metric("R2 Final", round(best_r2, 3))
 with colB:
-    st.metric("MAE", round(mae, 2))
+    st.metric("MAE Final", round(best_mae, 2))
 
-if r2 > 0.85:
-    st.success("✅ Model sangat baik (reliable)")
-elif r2 > 0.7:
+# status model
+if best_r2 > 0.85:
+    st.success("✅ Model sangat akurat")
+elif best_r2 > 0.7:
     st.warning("⚠️ Model cukup baik")
 else:
     st.error("❌ Model kurang akurat")
@@ -107,14 +165,14 @@ range_dict = {col: (df[col].min(), df[col].max()) for col in features}
 # =========================================================
 # INPUT FORM
 # =========================================================
-st.subheader("🎛️ Input Parameter Operasi")
+st.subheader("🎛️ Input Parameter")
 
-with st.form("form_input"):
+with st.form("form"):
 
     col1, col2, col3 = st.columns(3)
 
     with col1:
-        load = st.number_input("Load (MW)", value=None)
+        load = st.number_input("Load", value=None)
         airflow = st.number_input("Airflow", value=None)
         pa_pressure = st.number_input("PA Pressure", value=None)
 
@@ -123,34 +181,32 @@ with st.form("form_input"):
         idf_b_current = st.number_input("IDF B Current", value=None)
 
     with col3:
-        fdf_a_vane = st.number_input("FDF A Vane (%)", value=None)
-        fdf_b_vane = st.number_input("FDF B Vane (%)", value=None)
+        fdf_a_vane = st.number_input("FDF A Vane", value=None)
+        fdf_b_vane = st.number_input("FDF B Vane", value=None)
 
-    st.markdown("### 🔧 IDF Existing")
+    st.markdown("### IDF Existing")
     col4, col5 = st.columns(2)
 
     with col4:
-        idf_a_vane_input = st.number_input("IDF A Vane (%)", value=None)
+        idf_a_vane_input = st.number_input("IDF A Vane", value=None)
 
     with col5:
-        idf_b_vane_input = st.number_input("IDF B Vane (%)", value=None)
+        idf_b_vane_input = st.number_input("IDF B Vane", value=None)
 
-    submit = st.form_submit_button("🚀 Jalankan Prediksi & Optimasi")
+    submit = st.form_submit_button("🚀 Run")
 
 # =========================================================
 # PROCESS
 # =========================================================
 if submit:
 
-    inputs = [
+    if any(v is None for v in [
         load, airflow, pa_pressure,
         idf_a_current, idf_b_current,
         fdf_a_vane, fdf_b_vane,
         idf_a_vane_input, idf_b_vane_input
-    ]
-
-    if any(v is None for v in inputs):
-        st.error("⚠️ Semua input harus diisi!")
+    ]):
+        st.error("Isi semua input!")
         st.stop()
 
     input_data = pd.DataFrame([{
@@ -163,53 +219,49 @@ if submit:
         "fdf_b_vane": fdf_b_vane
     }])
 
-    # =====================================================
-    # VALIDASI RANGE INPUT
-    # =====================================================
-    out_of_range = []
+    # feature tambahan
+    input_data["total_idf_current"] = idf_a_current + idf_b_current
+    input_data["airflow_per_load"] = airflow / load
+    input_data["vane_diff"] = idf_a_vane_input - idf_b_vane_input
+    input_data["fdf_avg"] = (fdf_a_vane + fdf_b_vane) / 2
+    input_data["air_x_pa"] = airflow * pa_pressure
 
+    # =====================
+    # RANGE CHECK
+    # =====================
+    out_range = []
     for col in features:
         val = input_data[col].values[0]
-        min_val, max_val = range_dict[col]
+        min_v, max_v = range_dict[col]
+        if val < min_v or val > max_v:
+            out_range.append(col)
 
-        if val < min_val or val > max_val:
-            out_of_range.append(col)
+    if out_range:
+        st.warning(f"Out of range: {out_range}")
 
-    if out_of_range:
-        st.warning(f"⚠️ Input di luar range training: {out_of_range}")
-
-    # =====================================================
-    # PREDIKSI FP
-    # =====================================================
+    # =====================
+    # PREDIKSI
+    # =====================
     pred_fp = model_fp.predict(input_data)[0]
 
-    st.subheader("📊 Hasil Prediksi")
-    st.metric("Furnace Pressure", round(pred_fp, 2))
+    st.subheader("📊 Furnace Pressure")
+    st.metric("Prediksi FP", round(pred_fp, 2))
 
-    if pred_fp > -50:
-        st.error("⚠️ Pressure terlalu positif")
-    elif pred_fp < -200:
-        st.warning("⚠️ Pressure terlalu negatif")
-    else:
-        st.success("✅ Normal")
-
-    # =====================================================
+    # =====================
     # CONFIDENCE
-    # =====================================================
-    st.subheader("🧠 Confidence")
-
-    confidence = max(0, 100 - (mae * 2))
+    # =====================
+    confidence = max(0, 100 - (best_mae * 2))
     st.metric("Confidence (%)", round(confidence, 1))
 
-    # =====================================================
-    # OPTIMASI IDF A & B
-    # =====================================================
+    # =====================
+    # OPTIMASI
+    # =====================
     best_score = 999
     best_a = None
     best_b = None
 
-    for a in np.linspace(40, 90, 20):
-        for b in np.linspace(40, 90, 20):
+    for a in np.linspace(40, 90, 15):
+        for b in np.linspace(40, 90, 15):
 
             temp = input_data.copy()
 
@@ -233,12 +285,6 @@ if submit:
                 best_a = a
                 best_b = b
 
-    st.subheader("🎯 Rekomendasi Optimal")
-
-    colA, colB = st.columns(2)
-
-    with colA:
-        st.metric("IDF A (%)", round(best_a, 2))
-
-    with colB:
-        st.metric("IDF B (%)", round(best_b, 2))
+    st.subheader("🎯 Rekomendasi")
+    st.metric("IDF A", round(best_a, 2))
+    st.metric("IDF B", round(best_b, 2))

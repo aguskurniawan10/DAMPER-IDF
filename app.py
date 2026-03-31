@@ -7,11 +7,8 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import r2_score, mean_absolute_error
 from sklearn.ensemble import RandomForestRegressor
 
-# =========================================================
-# CONFIG
-# =========================================================
 st.set_page_config(page_title="IDF Optimizer AI", layout="wide")
-st.title("🔥 IDF A & B Optimization + Furnace Pressure (High Accuracy AI)")
+st.title("🔥 IDF Optimization + Furnace Pressure (Time-Series AI)")
 
 # =========================================================
 # LOAD DATA
@@ -45,15 +42,15 @@ for col in df.columns:
 
 df = df.dropna()
 
-# Filter lebih ketat
 df = df[
     (df["load"] > 150) &
-    (df["fp"] > -250) & (df["fp"] < -20) &
-    (df["idf_a_current"] > 50) &
-    (df["idf_b_current"] > 50)
+    (df["fp"] > -250) & (df["fp"] < -20)
 ]
 
-st.success(f"Data siap: {df.shape}")
+# =========================================================
+# SORT TIME
+# =========================================================
+df = df.sort_values("time")
 
 # =========================================================
 # FEATURE ENGINEERING
@@ -64,103 +61,59 @@ df["vane_diff"] = df["idf_a_vane"] - df["idf_b_vane"]
 df["fdf_avg"] = (df["fdf_a_vane"] + df["fdf_b_vane"]) / 2
 df["air_x_pa"] = df["airflow"] * df["pa_pressure"]
 
+# =========================================================
+# LAG FEATURE (WAJIB)
+# =========================================================
+lag_cols = ["fp", "airflow", "idf_a_current", "idf_b_current", "pa_pressure"]
+
+for col in lag_cols:
+    df[f"{col}_lag1"] = df[col].shift(1)
+    df[f"{col}_lag2"] = df[col].shift(2)
+
+df = df.dropna()
+
+st.success(f"Data siap: {df.shape}")
+
+# =========================================================
+# FEATURE LIST
+# =========================================================
 features = [
     "load", "airflow", "pa_pressure",
     "idf_a_current", "idf_b_current",
     "fdf_a_vane", "fdf_b_vane",
+
     "total_idf_current",
     "airflow_per_load",
     "vane_diff",
     "fdf_avg",
-    "air_x_pa"
+    "air_x_pa",
+
+    "fp_lag1", "fp_lag2",
+    "airflow_lag1", "idf_a_current_lag1",
+    "idf_b_current_lag1", "pa_pressure_lag1"
 ]
 
 X = df[features]
 y = df["fp"]
 
 # =========================================================
-# TRAIN MODEL (RF + XGB)
+# TRAIN MODEL
 # =========================================================
 X_train, X_test, y_train, y_test = train_test_split(
     X, y, test_size=0.2, random_state=42
 )
 
-rf = RandomForestRegressor(
-    n_estimators=300,
-    max_depth=15,
-    min_samples_split=5,
-    random_state=42
-)
+rf = RandomForestRegressor(n_estimators=300, max_depth=15)
 rf.fit(X_train, y_train)
+
 pred_rf = rf.predict(X_test)
 
-# fallback jika XGBoost tidak ada
-try:
-    from xgboost import XGBRegressor
+r2 = r2_score(y_test, pred_rf)
+mae = mean_absolute_error(y_test, pred_rf)
 
-    xgb = XGBRegressor(
-        n_estimators=300,
-        max_depth=6,
-        learning_rate=0.05,
-        subsample=0.8,
-        colsample_bytree=0.8
-    )
-    xgb.fit(X_train, y_train)
-    pred_xgb = xgb.predict(X_test)
-
-    r2_xgb = r2_score(y_test, pred_xgb)
-    mae_xgb = mean_absolute_error(y_test, pred_xgb)
-
-except:
-    xgb = None
-    r2_xgb = -999
-    mae_xgb = 999
-
-# RF metrics
-r2_rf = r2_score(y_test, pred_rf)
-mae_rf = mean_absolute_error(y_test, pred_rf)
-
-# pilih terbaik
-if r2_xgb > r2_rf:
-    model_fp = xgb
-    best_name = "XGBoost"
-    best_r2 = r2_xgb
-    best_mae = mae_xgb
-else:
-    model_fp = rf
-    best_name = "RandomForest"
-    best_r2 = r2_rf
-    best_mae = mae_rf
-
-# =========================================================
-# VALIDASI MODEL
-# =========================================================
 st.subheader("📊 Model Performance")
-
-st.write(f"RF R2: {r2_rf:.3f} | MAE: {mae_rf:.2f}")
-if xgb:
-    st.write(f"XGB R2: {r2_xgb:.3f} | MAE: {mae_xgb:.2f}")
-
-st.success(f"Model terbaik: {best_name}")
-
-colA, colB = st.columns(2)
-with colA:
-    st.metric("R2 Final", round(best_r2, 3))
-with colB:
-    st.metric("MAE Final", round(best_mae, 2))
-
-# status model
-if best_r2 > 0.85:
-    st.success("✅ Model sangat akurat")
-elif best_r2 > 0.7:
-    st.warning("⚠️ Model cukup baik")
-else:
-    st.error("❌ Model kurang akurat")
-
-# =========================================================
-# RANGE TRAINING
-# =========================================================
-range_dict = {col: (df[col].min(), df[col].max()) for col in features}
+st.metric("R2", round(r2, 3))
+st.metric("MAE", round(mae, 2))
 
 # =========================================================
 # INPUT FORM
@@ -226,64 +179,47 @@ if submit:
     input_data["fdf_avg"] = (fdf_a_vane + fdf_b_vane) / 2
     input_data["air_x_pa"] = airflow * pa_pressure
 
-    # =====================
-    # RANGE CHECK
-    # =====================
-    out_range = []
-    for col in features:
-        val = input_data[col].values[0]
-        min_v, max_v = range_dict[col]
-        if val < min_v or val > max_v:
-            out_range.append(col)
-
-    if out_range:
-        st.warning(f"Out of range: {out_range}")
+    # lag (sementara pakai kondisi sekarang)
+    input_data["fp_lag1"] = -100
+    input_data["fp_lag2"] = -100
+    input_data["airflow_lag1"] = airflow
+    input_data["idf_a_current_lag1"] = idf_a_current
+    input_data["idf_b_current_lag1"] = idf_b_current
+    input_data["pa_pressure_lag1"] = pa_pressure
 
     # =====================
     # PREDIKSI
     # =====================
-    pred_fp = model_fp.predict(input_data)[0]
+    pred_fp = rf.predict(input_data)[0]
 
     st.subheader("📊 Furnace Pressure")
     st.metric("Prediksi FP", round(pred_fp, 2))
 
     # =====================
-    # CONFIDENCE
-    # =====================
-    confidence = max(0, 100 - (best_mae * 2))
-    st.metric("Confidence (%)", round(confidence, 1))
-
-    # =====================
     # OPTIMASI
     # =====================
     best_score = 999
-    best_a = None
-    best_b = None
+    best_a, best_b = None, None
 
     for a in np.linspace(40, 90, 15):
         for b in np.linspace(40, 90, 15):
 
             temp = input_data.copy()
 
-            if idf_a_vane_input != 0:
-                temp["idf_a_current"] = idf_a_current * (a / idf_a_vane_input)
+            temp["idf_a_current"] = idf_a_current * (a / idf_a_vane_input)
+            temp["idf_b_current"] = idf_b_current * (b / idf_b_vane_input)
 
-            if idf_b_vane_input != 0:
-                temp["idf_b_current"] = idf_b_current * (b / idf_b_vane_input)
-
-            pred_sim = model_fp.predict(temp)[0]
+            pred_sim = rf.predict(temp)[0]
 
             penalty = abs(pred_sim + 100) * 2
+            penalty += abs(a - b) * 0.5
 
             if pred_sim > -50:
                 penalty += 300
 
-            penalty += abs(a - b) * 0.5
-
             if penalty < best_score:
                 best_score = penalty
-                best_a = a
-                best_b = b
+                best_a, best_b = a, b
 
     st.subheader("🎯 Rekomendasi")
     st.metric("IDF A", round(best_a, 2))

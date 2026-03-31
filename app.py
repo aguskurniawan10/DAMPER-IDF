@@ -10,41 +10,29 @@ from sklearn.ensemble import RandomForestRegressor
 # =========================================================
 # CONFIG
 # =========================================================
-st.set_page_config(page_title="IDF Optimizer", layout="wide")
-st.title("🔥 IDF Optimizer (Stable Version)")
+st.set_page_config(page_title="IDF Optimizer AI", layout="wide")
+st.title("🔥 IDF Damper Optimization + Furnace Pressure Prediction")
 
 # =========================================================
-# LOAD DATA (ANTI ERROR)
+# LOAD DATA
 # =========================================================
 url = "https://raw.githubusercontent.com/aguskurniawan10/DAMPER-IDF/main/DATA%20DISEM%20IDF%203.xlsx"
 
 @st.cache_data
 def load_data():
-    try:
-        df = pd.read_excel(url, sheet_name="UNIT 1")
-        return df
-    except Exception as e:
-        st.error(f"Gagal load data: {e}")
-        return None
+    return pd.read_excel(url, sheet_name="UNIT 1")
 
 df = load_data()
 
-if df is None:
-    st.stop()
-
 # =========================================================
-# RENAME (SAFE)
+# RENAME
 # =========================================================
-try:
-    df.columns = [
-        "time", "load", "idf_a_vane", "idf_b_vane", "fp",
-        "idf_a_current", "idf_b_current", "pa_pressure",
-        "fdf_a_current", "fdf_a_vane",
-        "fdf_b_current", "fdf_b_vane", "airflow"
-    ]
-except:
-    st.error("Format kolom tidak sesuai!")
-    st.stop()
+df.columns = [
+    "time", "load", "idf_a_vane", "idf_b_vane", "fp",
+    "idf_a_current", "idf_b_current", "pa_pressure",
+    "fdf_a_current", "fdf_a_vane",
+    "fdf_b_current", "fdf_b_vane", "airflow"
+]
 
 # =========================================================
 # CLEANING
@@ -63,10 +51,6 @@ df = df[
     (df["fp"] < 50)
 ]
 
-if len(df) < 10:
-    st.error("Data terlalu sedikit setelah cleaning!")
-    st.stop()
-
 st.success(f"Data siap: {df.shape}")
 
 # =========================================================
@@ -79,98 +63,155 @@ features = [
 ]
 
 X = df[features]
-y = df["idf_a_vane"]
 
 # =========================================================
-# TRAIN MODEL (PAKAI RF → STABIL)
+# MODEL 1: IDF
 # =========================================================
+y_idf = df["idf_a_vane"]
+
 X_train, X_test, y_train, y_test = train_test_split(
-    X, y, test_size=0.2, random_state=42
+    X, y_idf, test_size=0.2, random_state=42
 )
 
-model = RandomForestRegressor(n_estimators=100, max_depth=10)
-model.fit(X_train, y_train)
+model_idf = RandomForestRegressor(n_estimators=100, max_depth=10)
+model_idf.fit(X_train, y_train)
 
-pred = model.predict(X_test)
+pred_idf = model_idf.predict(X_test)
 
-r2 = r2_score(y_test, pred)
-mae = mean_absolute_error(y_test, pred)
+r2_idf = r2_score(y_test, pred_idf)
+mae_idf = mean_absolute_error(y_test, pred_idf)
 
+# =========================================================
+# MODEL 2: FURNACE PRESSURE
+# =========================================================
+y_fp = df["fp"]
+
+X_train_fp, X_test_fp, y_train_fp, y_test_fp = train_test_split(
+    X, y_fp, test_size=0.2, random_state=42
+)
+
+model_fp = RandomForestRegressor(n_estimators=100, max_depth=10)
+model_fp.fit(X_train_fp, y_train_fp)
+
+pred_fp = model_fp.predict(X_test_fp)
+
+r2_fp = r2_score(y_test_fp, pred_fp)
+mae_fp = mean_absolute_error(y_test_fp, pred_fp)
+
+# =========================================================
+# PERFORMANCE
+# =========================================================
 st.subheader("📊 Model Performance")
-st.write(f"R2: {r2:.3f}")
-st.write(f"MAE: {mae:.2f}")
+
+perf_df = pd.DataFrame({
+    "Model": ["IDF Model", "Furnace Pressure Model"],
+    "R2": [r2_idf, r2_fp],
+    "MAE": [mae_idf, mae_fp]
+})
+
+st.dataframe(perf_df)
 
 # =========================================================
-# OPTIMIZER (ANTI ERROR)
+# INPUT USER
 # =========================================================
-def optimize_safe(row):
+st.subheader("🎛️ Input Parameter Operasi")
+
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    load = st.number_input("Load (MW)", value=200.0)
+    airflow = st.number_input("Airflow", value=750.0)
+    pa_pressure = st.number_input("PA Pressure", value=8.5)
+
+with col2:
+    idf_a_current = st.number_input("IDF A Current", value=150.0)
+    idf_b_current = st.number_input("IDF B Current", value=150.0)
+
+with col3:
+    fdf_a_vane = st.number_input("FDF A Vane (%)", value=40.0)
+    fdf_b_vane = st.number_input("FDF B Vane (%)", value=40.0)
+
+# =========================================================
+# PREDIKSI
+# =========================================================
+if st.button("🔍 Prediksi Furnace Pressure"):
+
+    input_data = pd.DataFrame([{
+        "load": load,
+        "airflow": airflow,
+        "pa_pressure": pa_pressure,
+        "idf_a_current": idf_a_current,
+        "idf_b_current": idf_b_current,
+        "fdf_a_vane": fdf_a_vane,
+        "fdf_b_vane": fdf_b_vane
+    }])
+
+    pred_fp = model_fp.predict(input_data)[0]
+
+    st.subheader("📊 Hasil Prediksi")
+    st.metric("Furnace Pressure", round(pred_fp, 2))
+
+    if pred_fp > -50:
+        st.error("⚠️ Furnace Pressure terlalu positif")
+    elif pred_fp < -200:
+        st.warning("⚠️ Furnace Pressure terlalu negatif")
+    else:
+        st.success("✅ Furnace Pressure normal")
+
+# =========================================================
+# OPTIMASI
+# =========================================================
+if st.button("🚀 Cari IDF Optimal"):
+
+    input_data = pd.DataFrame([{
+        "load": load,
+        "airflow": airflow,
+        "pa_pressure": pa_pressure,
+        "idf_a_current": idf_a_current,
+        "idf_b_current": idf_b_current,
+        "fdf_a_vane": fdf_a_vane,
+        "fdf_b_vane": fdf_b_vane
+    }])
 
     best_score = 999
-    best_vane = row["idf_a_vane"]
+    best_vane = None
 
-    for vane in np.linspace(40, 90, 30):
+    for vane in np.linspace(40, 90, 40):
+
+        temp = input_data.copy()
+
+        if idf_a_current != 0:
+            temp["idf_a_current"] = idf_a_current * (vane / 70)
+
+        pred_fp = model_fp.predict(temp)[0]
 
         penalty = 0
+        target_fp = -100
 
-        # SAFETY: hindari pembagian nol
-        if row["idf_a_vane"] == 0:
-            continue
+        penalty += abs(pred_fp - target_fp) * 2
 
-        # simulasi current
-        current_sim = row["idf_a_current"] * (vane / row["idf_a_vane"])
+        if pred_fp > -50:
+            penalty += 300
 
-        # constraint furnace pressure
-        if row["fp"] > -50:
-            penalty += 100
-        elif row["fp"] < -200:
-            penalty += 50
-
-        # current limit
-        penalty += max(0, current_sim - 160) * 2
-
-        # smooth change
-        penalty += abs(vane - row["idf_a_vane"])
+        penalty += max(0, temp["idf_a_current"].values[0] - 160) * 3
 
         if penalty < best_score:
             best_score = penalty
             best_vane = vane
 
-    return best_vane
+    st.subheader("🎯 Rekomendasi")
+    st.metric("IDF A Optimal (%)", round(best_vane, 2))
 
 # =========================================================
-# RUN BUTTON
+# VISUAL DATA HISTORIS
 # =========================================================
-if st.button("🚀 Run Optimization"):
+st.subheader("📈 Data Historis")
 
-    df["idf_a_opt"] = df.apply(optimize_safe, axis=1)
+fig, ax = plt.subplots()
+ax.scatter(df["idf_a_vane"], df["fp"], alpha=0.3)
+ax.set_xlabel("IDF A Vane")
+ax.set_ylabel("Furnace Pressure")
+ax.set_title("Historis: Damper vs Furnace Pressure")
+ax.grid()
 
-    st.success("Optimization selesai!")
-
-    # =====================================================
-    # VISUAL
-    # =====================================================
-    st.subheader("📈 Visualization")
-
-    fig1, ax1 = plt.subplots()
-    ax1.scatter(df["idf_a_vane"], df["idf_a_opt"], alpha=0.3)
-    ax1.set_title("Actual vs Optimal")
-    ax1.grid()
-    st.pyplot(fig1)
-
-    fig2, ax2 = plt.subplots()
-    ax2.scatter(df["load"], df["idf_a_vane"], label="Actual", alpha=0.3)
-    ax2.scatter(df["load"], df["idf_a_opt"], label="Optimal", alpha=0.3)
-    ax2.legend()
-    ax2.grid()
-    st.pyplot(fig2)
-
-    # =====================================================
-    # SUMMARY
-    # =====================================================
-    st.subheader("📊 Summary")
-
-    avg_actual = df["idf_a_vane"].mean()
-    avg_opt = df["idf_a_opt"].mean()
-
-    st.metric("Actual", round(avg_actual, 2))
-    st.metric("Optimal", round(avg_opt, 2))
+st.pyplot(fig)

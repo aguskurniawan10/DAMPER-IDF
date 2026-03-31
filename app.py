@@ -212,47 +212,86 @@ if submit:
     st.metric("Prediksi FP", round(pred_fp, 2))
 
     # =====================================================
-    # OPTIMIZER
-    # =====================================================
-    st.subheader("🎯 Rekomendasi Damper")
+# OPTIMIZER
+# =====================================================
+st.subheader("🎯 Rekomendasi Damper")
 
-    target_fp = -100
+target_fp = -100
 
-    best_score = 999
-    best_a, best_b, best_fp = None, None, None
+best_score = 999
+best_a, best_b, best_fp = None, None, None
 
-    for a in np.linspace(40, 90, 20):
-        for b in np.linspace(40, 90, 20):
+for a in np.linspace(40, 95, 25):
+    for b in np.linspace(40, 95, 25):
 
-            temp = input_data.copy()
+        temp = input_data.copy()
 
+        # =========================
+        # UPDATE CURRENT (REAL EFFECT)
+        # =========================
+        if idf_a_vane_input > 0:
             temp["idf_a_current"] = idf_a_current * (a / idf_a_vane_input)
+
+        if idf_b_vane_input > 0:
             temp["idf_b_current"] = idf_b_current * (b / idf_b_vane_input)
 
-            temp["total_idf_current"] = temp["idf_a_current"] + temp["idf_b_current"]
-            temp["idf_total_vane"] = a + b
-            temp["air_per_idf"] = airflow / (temp["idf_total_vane"] + 1)
-            temp["current_ratio"] = temp["idf_a_current"] / (temp["idf_b_current"] + 1)
+        # =========================
+        # UPDATE FEATURE TURUNAN
+        # =========================
+        temp["total_idf_current"] = temp["idf_a_current"] + temp["idf_b_current"]
+        temp["idf_total_vane"] = a + b
+        temp["air_per_idf"] = airflow / (temp["idf_total_vane"] + 1)
+        temp["current_ratio"] = temp["idf_a_current"] / (temp["idf_b_current"] + 1)
 
-            pred_sim = rf.predict(temp)[0]
+        # =========================
+        # UPDATE LAG (PENTING!)
+        # =========================
+        temp["fp_smooth_lag1"] = pred_fp
+        temp["fp_smooth_lag2"] = pred_fp
 
-            penalty = abs(pred_sim - target_fp) * 2
+        # =========================
+        # PREDIKSI
+        # =========================
+        pred_sim = rf.predict(temp)[0]
 
-            if pred_sim > -50:
-                penalty += 500
+        # =========================
+        # OBJECTIVE FUNCTION
+        # =========================
+        penalty = 0
 
-            penalty += abs(a - b) * 0.5
-            penalty += abs(a - idf_a_vane_input) * 0.3
-            penalty += abs(b - idf_b_vane_input) * 0.3
+        # target FP
+        penalty += abs(pred_sim - target_fp) * 3
 
-            if penalty < best_score:
-                best_score = penalty
-                best_a = a
-                best_b = b
-                best_fp = pred_sim
+        # safety
+        if pred_sim > -50:
+            penalty += 1000
 
-    colA, colB, colC = st.columns(3)
+        if pred_sim < -250:
+            penalty += 200
 
-    colA.metric("IDF A Optimal", round(best_a, 2))
-    colB.metric("IDF B Optimal", round(best_b, 2))
-    colC.metric("FP Setelah Optimasi", round(best_fp, 2))
+        # balance fan
+        penalty += abs(a - b) * 0.3
+
+        # smooth movement
+        penalty += abs(a - idf_a_vane_input) * 0.2
+        penalty += abs(b - idf_b_vane_input) * 0.2
+
+        if penalty < best_score:
+            best_score = penalty
+            best_a = a
+            best_b = b
+            best_fp = pred_sim
+
+# =====================================================
+# OUTPUT
+# =====================================================
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    st.metric("IDF A Optimal (%)", round(best_a, 2))
+
+with col2:
+    st.metric("IDF B Optimal (%)", round(best_b, 2))
+
+with col3:
+    st.metric("FP Setelah Optimasi", round(best_fp, 2))

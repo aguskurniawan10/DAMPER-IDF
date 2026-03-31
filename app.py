@@ -7,8 +7,11 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import r2_score, mean_absolute_error
 from sklearn.ensemble import RandomForestRegressor
 
+# =========================================================
+# CONFIG
+# =========================================================
 st.set_page_config(page_title="IDF Optimizer AI", layout="wide")
-st.title("🔥 IDF Optimization (Refined AI Model - High Accuracy)")
+st.title("🔥 IDF A & B Optimization + Furnace Pressure (Final AI)")
 
 # =========================================================
 # LOAD DATA
@@ -48,22 +51,18 @@ df = df.dropna()
 df = df.sort_values("time")
 
 # =========================================================
-# FILTER STABLE OPERATION
+# FILTER STABLE
 # =========================================================
 df["load_diff"] = df["load"].diff().abs()
 df["fp_diff"] = df["fp"].diff().abs()
 
-df = df[
-    (df["load_diff"] < 2) &
-    (df["fp_diff"] < 25)
-]
+df = df[(df["load_diff"] < 2) & (df["fp_diff"] < 25)]
 
 # =========================================================
 # REMOVE OUTLIER
 # =========================================================
 q_low = df["fp"].quantile(0.05)
 q_high = df["fp"].quantile(0.95)
-
 df = df[(df["fp"] > q_low) & (df["fp"] < q_high)]
 
 # =========================================================
@@ -96,7 +95,7 @@ df = df.dropna()
 st.success(f"Data siap: {df.shape}")
 
 # =========================================================
-# FEATURE LIST
+# FEATURES
 # =========================================================
 features = [
     "load", "airflow", "pa_pressure",
@@ -134,6 +133,7 @@ rf = RandomForestRegressor(
     min_samples_split=4,
     random_state=42
 )
+
 rf.fit(X_train, y_train)
 
 pred = rf.predict(X_test)
@@ -142,22 +142,13 @@ r2 = r2_score(y_test, pred)
 mae = mean_absolute_error(y_test, pred)
 
 # =========================================================
-# DISPLAY PERFORMANCE
+# PERFORMANCE
 # =========================================================
-st.subheader("📊 Model Performance (Refined)")
+st.subheader("📊 Model Performance")
 
 col1, col2 = st.columns(2)
-with col1:
-    st.metric("R2", round(r2, 3))
-with col2:
-    st.metric("MAE", round(mae, 2))
-
-if r2 > 0.8:
-    st.success("🔥 Model sudah bagus")
-elif r2 > 0.7:
-    st.warning("⚠️ Model cukup")
-else:
-    st.error("❌ Masih perlu improvement")
+col1.metric("R2", round(r2, 3))
+col2.metric("MAE", round(mae, 2))
 
 # =========================================================
 # INPUT FORM
@@ -176,10 +167,10 @@ with st.form("form"):
     fdf_a_vane = st.number_input("FDF A Vane")
     fdf_b_vane = st.number_input("FDF B Vane")
 
-    idf_a_vane_input = st.number_input("IDF A Vane")
-    idf_b_vane_input = st.number_input("IDF B Vane")
+    idf_a_vane_input = st.number_input("IDF A Vane Existing")
+    idf_b_vane_input = st.number_input("IDF B Vane Existing")
 
-    submit = st.form_submit_button("🚀 Predict")
+    submit = st.form_submit_button("🚀 Run")
 
 # =========================================================
 # PROCESS
@@ -212,82 +203,56 @@ if submit:
     input_data["idf_a_current_lag1"] = idf_a_current
     input_data["idf_b_current_lag1"] = idf_b_current
 
+    # =====================
+    # PREDIKSI
+    # =====================
     pred_fp = rf.predict(input_data)[0]
 
-    st.subheader("📊 Furnace Pressure Prediction")
-    st.metric("FP (Predicted)", round(pred_fp, 2))
-    # =========================================================
-# OPTIMASI DAMPER (REAL RECOMMENDATION)
-# =========================================================
+    st.subheader("📊 Furnace Pressure")
+    st.metric("Prediksi FP", round(pred_fp, 2))
 
-st.subheader("🎯 Rekomendasi Bukaan Damper")
+    # =====================================================
+    # OPTIMIZER
+    # =====================================================
+    st.subheader("🎯 Rekomendasi Damper")
 
-target_fp = -100  # bisa kamu jadikan slider nanti
+    target_fp = -100
 
-best_score = 999
-best_a = None
-best_b = None
-best_fp = None
+    best_score = 999
+    best_a, best_b, best_fp = None, None, None
 
-for a in np.linspace(40, 90, 20):
-    for b in np.linspace(40, 90, 20):
+    for a in np.linspace(40, 90, 20):
+        for b in np.linspace(40, 90, 20):
 
-        temp = input_data.copy()
+            temp = input_data.copy()
 
-        # simulasi perubahan current
-        if idf_a_vane_input != 0:
             temp["idf_a_current"] = idf_a_current * (a / idf_a_vane_input)
-
-        if idf_b_vane_input != 0:
             temp["idf_b_current"] = idf_b_current * (b / idf_b_vane_input)
 
-        # update feature turunan
-        temp["total_idf_current"] = temp["idf_a_current"] + temp["idf_b_current"]
-        temp["idf_total_vane"] = a + b
-        temp["air_per_idf"] = airflow / (temp["idf_total_vane"] + 1)
-        temp["current_ratio"] = temp["idf_a_current"] / (temp["idf_b_current"] + 1)
+            temp["total_idf_current"] = temp["idf_a_current"] + temp["idf_b_current"]
+            temp["idf_total_vane"] = a + b
+            temp["air_per_idf"] = airflow / (temp["idf_total_vane"] + 1)
+            temp["current_ratio"] = temp["idf_a_current"] / (temp["idf_b_current"] + 1)
 
-        # prediksi FP
-        pred_sim = rf.predict(temp)[0]
+            pred_sim = rf.predict(temp)[0]
 
-        # =====================
-        # OBJECTIVE FUNCTION
-        # =====================
-        penalty = 0
+            penalty = abs(pred_sim - target_fp) * 2
 
-        # target FP
-        penalty += abs(pred_sim - target_fp) * 2
+            if pred_sim > -50:
+                penalty += 500
 
-        # safety constraint
-        if pred_sim > -50:
-            penalty += 500  # bahaya tekanan positif
+            penalty += abs(a - b) * 0.5
+            penalty += abs(a - idf_a_vane_input) * 0.3
+            penalty += abs(b - idf_b_vane_input) * 0.3
 
-        if pred_sim < -250:
-            penalty += 100
+            if penalty < best_score:
+                best_score = penalty
+                best_a = a
+                best_b = b
+                best_fp = pred_sim
 
-        # balance A & B
-        penalty += abs(a - b) * 0.5
+    colA, colB, colC = st.columns(3)
 
-        # minim perubahan (real plant constraint)
-        penalty += abs(a - idf_a_vane_input) * 0.3
-        penalty += abs(b - idf_b_vane_input) * 0.3
-
-        if penalty < best_score:
-            best_score = penalty
-            best_a = a
-            best_b = b
-            best_fp = pred_sim
-
-# =========================================================
-# OUTPUT
-# =========================================================
-col1, col2, col3 = st.columns(3)
-
-with col1:
-    st.metric("IDF A Optimal (%)", round(best_a, 2))
-
-with col2:
-    st.metric("IDF B Optimal (%)", round(best_b, 2))
-
-with col3:
-    st.metric("FP Prediksi Setelah Optimasi", round(best_fp, 2))
+    colA.metric("IDF A Optimal", round(best_a, 2))
+    colB.metric("IDF B Optimal", round(best_b, 2))
+    colC.metric("FP Setelah Optimasi", round(best_fp, 2))

@@ -8,7 +8,7 @@ from sklearn.metrics import r2_score, mean_absolute_error
 from sklearn.ensemble import RandomForestRegressor
 
 st.set_page_config(page_title="IDF Optimizer AI", layout="wide")
-st.title("🔥 IDF Optimization + Furnace Pressure (Time-Series AI)")
+st.title("🔥 IDF Optimization (Refined AI Model - High Accuracy)")
 
 # =========================================================
 # LOAD DATA
@@ -42,29 +42,50 @@ for col in df.columns:
 
 df = df.dropna()
 
-df = df[
-    (df["load"] > 150) &
-    (df["fp"] > -250) & (df["fp"] < -20)
-]
-
 # =========================================================
 # SORT TIME
 # =========================================================
 df = df.sort_values("time")
 
 # =========================================================
+# FILTER STABLE OPERATION
+# =========================================================
+df["load_diff"] = df["load"].diff().abs()
+df["fp_diff"] = df["fp"].diff().abs()
+
+df = df[
+    (df["load_diff"] < 2) &
+    (df["fp_diff"] < 25)
+]
+
+# =========================================================
+# REMOVE OUTLIER
+# =========================================================
+q_low = df["fp"].quantile(0.05)
+q_high = df["fp"].quantile(0.95)
+
+df = df[(df["fp"] > q_low) & (df["fp"] < q_high)]
+
+# =========================================================
+# SMOOTH TARGET
+# =========================================================
+df["fp_smooth"] = df["fp"].rolling(3).mean()
+
+# =========================================================
 # FEATURE ENGINEERING
 # =========================================================
 df["total_idf_current"] = df["idf_a_current"] + df["idf_b_current"]
+df["idf_total_vane"] = df["idf_a_vane"] + df["idf_b_vane"]
 df["airflow_per_load"] = df["airflow"] / df["load"]
-df["vane_diff"] = df["idf_a_vane"] - df["idf_b_vane"]
+df["air_per_idf"] = df["airflow"] / (df["idf_total_vane"] + 1)
+df["current_ratio"] = df["idf_a_current"] / (df["idf_b_current"] + 1)
 df["fdf_avg"] = (df["fdf_a_vane"] + df["fdf_b_vane"]) / 2
 df["air_x_pa"] = df["airflow"] * df["pa_pressure"]
 
 # =========================================================
-# LAG FEATURE (WAJIB)
+# LAG FEATURE
 # =========================================================
-lag_cols = ["fp", "airflow", "idf_a_current", "idf_b_current", "pa_pressure"]
+lag_cols = ["fp_smooth", "airflow", "idf_a_current", "idf_b_current"]
 
 for col in lag_cols:
     df[f"{col}_lag1"] = df[col].shift(1)
@@ -83,18 +104,22 @@ features = [
     "fdf_a_vane", "fdf_b_vane",
 
     "total_idf_current",
+    "idf_total_vane",
     "airflow_per_load",
-    "vane_diff",
+    "air_per_idf",
+    "current_ratio",
     "fdf_avg",
     "air_x_pa",
 
-    "fp_lag1", "fp_lag2",
-    "airflow_lag1", "idf_a_current_lag1",
-    "idf_b_current_lag1", "pa_pressure_lag1"
+    "fp_smooth_lag1",
+    "fp_smooth_lag2",
+    "airflow_lag1",
+    "idf_a_current_lag1",
+    "idf_b_current_lag1"
 ]
 
 X = df[features]
-y = df["fp"]
+y = df["fp_smooth"]
 
 # =========================================================
 # TRAIN MODEL
@@ -103,17 +128,36 @@ X_train, X_test, y_train, y_test = train_test_split(
     X, y, test_size=0.2, random_state=42
 )
 
-rf = RandomForestRegressor(n_estimators=300, max_depth=15)
+rf = RandomForestRegressor(
+    n_estimators=400,
+    max_depth=18,
+    min_samples_split=4,
+    random_state=42
+)
 rf.fit(X_train, y_train)
 
-pred_rf = rf.predict(X_test)
+pred = rf.predict(X_test)
 
-r2 = r2_score(y_test, pred_rf)
-mae = mean_absolute_error(y_test, pred_rf)
+r2 = r2_score(y_test, pred)
+mae = mean_absolute_error(y_test, pred)
 
-st.subheader("📊 Model Performance")
-st.metric("R2", round(r2, 3))
-st.metric("MAE", round(mae, 2))
+# =========================================================
+# DISPLAY PERFORMANCE
+# =========================================================
+st.subheader("📊 Model Performance (Refined)")
+
+col1, col2 = st.columns(2)
+with col1:
+    st.metric("R2", round(r2, 3))
+with col2:
+    st.metric("MAE", round(mae, 2))
+
+if r2 > 0.8:
+    st.success("🔥 Model sudah bagus")
+elif r2 > 0.7:
+    st.warning("⚠️ Model cukup")
+else:
+    st.error("❌ Masih perlu improvement")
 
 # =========================================================
 # INPUT FORM
@@ -122,45 +166,25 @@ st.subheader("🎛️ Input Parameter")
 
 with st.form("form"):
 
-    col1, col2, col3 = st.columns(3)
+    load = st.number_input("Load")
+    airflow = st.number_input("Airflow")
+    pa_pressure = st.number_input("PA Pressure")
 
-    with col1:
-        load = st.number_input("Load", value=None)
-        airflow = st.number_input("Airflow", value=None)
-        pa_pressure = st.number_input("PA Pressure", value=None)
+    idf_a_current = st.number_input("IDF A Current")
+    idf_b_current = st.number_input("IDF B Current")
 
-    with col2:
-        idf_a_current = st.number_input("IDF A Current", value=None)
-        idf_b_current = st.number_input("IDF B Current", value=None)
+    fdf_a_vane = st.number_input("FDF A Vane")
+    fdf_b_vane = st.number_input("FDF B Vane")
 
-    with col3:
-        fdf_a_vane = st.number_input("FDF A Vane", value=None)
-        fdf_b_vane = st.number_input("FDF B Vane", value=None)
+    idf_a_vane_input = st.number_input("IDF A Vane")
+    idf_b_vane_input = st.number_input("IDF B Vane")
 
-    st.markdown("### IDF Existing")
-    col4, col5 = st.columns(2)
-
-    with col4:
-        idf_a_vane_input = st.number_input("IDF A Vane", value=None)
-
-    with col5:
-        idf_b_vane_input = st.number_input("IDF B Vane", value=None)
-
-    submit = st.form_submit_button("🚀 Run")
+    submit = st.form_submit_button("🚀 Predict")
 
 # =========================================================
 # PROCESS
 # =========================================================
 if submit:
-
-    if any(v is None for v in [
-        load, airflow, pa_pressure,
-        idf_a_current, idf_b_current,
-        fdf_a_vane, fdf_b_vane,
-        idf_a_vane_input, idf_b_vane_input
-    ]):
-        st.error("Isi semua input!")
-        st.stop()
 
     input_data = pd.DataFrame([{
         "load": load,
@@ -174,53 +198,21 @@ if submit:
 
     # feature tambahan
     input_data["total_idf_current"] = idf_a_current + idf_b_current
+    input_data["idf_total_vane"] = idf_a_vane_input + idf_b_vane_input
     input_data["airflow_per_load"] = airflow / load
-    input_data["vane_diff"] = idf_a_vane_input - idf_b_vane_input
+    input_data["air_per_idf"] = airflow / (input_data["idf_total_vane"] + 1)
+    input_data["current_ratio"] = idf_a_current / (idf_b_current + 1)
     input_data["fdf_avg"] = (fdf_a_vane + fdf_b_vane) / 2
     input_data["air_x_pa"] = airflow * pa_pressure
 
-    # lag (sementara pakai kondisi sekarang)
-    input_data["fp_lag1"] = -100
-    input_data["fp_lag2"] = -100
+    # lag dummy
+    input_data["fp_smooth_lag1"] = -100
+    input_data["fp_smooth_lag2"] = -100
     input_data["airflow_lag1"] = airflow
     input_data["idf_a_current_lag1"] = idf_a_current
     input_data["idf_b_current_lag1"] = idf_b_current
-    input_data["pa_pressure_lag1"] = pa_pressure
 
-    # =====================
-    # PREDIKSI
-    # =====================
     pred_fp = rf.predict(input_data)[0]
 
-    st.subheader("📊 Furnace Pressure")
-    st.metric("Prediksi FP", round(pred_fp, 2))
-
-    # =====================
-    # OPTIMASI
-    # =====================
-    best_score = 999
-    best_a, best_b = None, None
-
-    for a in np.linspace(40, 90, 15):
-        for b in np.linspace(40, 90, 15):
-
-            temp = input_data.copy()
-
-            temp["idf_a_current"] = idf_a_current * (a / idf_a_vane_input)
-            temp["idf_b_current"] = idf_b_current * (b / idf_b_vane_input)
-
-            pred_sim = rf.predict(temp)[0]
-
-            penalty = abs(pred_sim + 100) * 2
-            penalty += abs(a - b) * 0.5
-
-            if pred_sim > -50:
-                penalty += 300
-
-            if penalty < best_score:
-                best_score = penalty
-                best_a, best_b = a, b
-
-    st.subheader("🎯 Rekomendasi")
-    st.metric("IDF A", round(best_a, 2))
-    st.metric("IDF B", round(best_b, 2))
+    st.subheader("📊 Furnace Pressure Prediction")
+    st.metric("FP (Predicted)", round(pred_fp, 2))

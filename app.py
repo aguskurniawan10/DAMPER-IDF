@@ -11,7 +11,7 @@ from sklearn.ensemble import RandomForestRegressor
 # CONFIG
 # =========================================================
 st.set_page_config(page_title="IDF Optimizer AI", layout="wide")
-st.title("🔥 IDF A & B Damper Optimization + Furnace Pressure Prediction")
+st.title("🔥 IDF A & B Optimization + Furnace Pressure Prediction (Validated AI)")
 
 # =========================================================
 # LOAD DATA
@@ -63,12 +63,11 @@ features = [
 ]
 
 X = df[features]
-
-# =========================================================
-# MODEL (FP)
-# =========================================================
 y_fp = df["fp"]
 
+# =========================================================
+# TRAIN MODEL
+# =========================================================
 X_train, X_test, y_train, y_test = train_test_split(
     X, y_fp, test_size=0.2, random_state=42
 )
@@ -77,11 +76,40 @@ model_fp = RandomForestRegressor(n_estimators=100, max_depth=10)
 model_fp.fit(X_train, y_train)
 
 # =========================================================
+# VALIDASI MODEL
+# =========================================================
+st.subheader("📊 Validasi Model")
+
+pred_test = model_fp.predict(X_test)
+
+r2 = r2_score(y_test, pred_test)
+mae = mean_absolute_error(y_test, pred_test)
+
+colA, colB = st.columns(2)
+
+with colA:
+    st.metric("R2 Score", round(r2, 3))
+with colB:
+    st.metric("MAE", round(mae, 2))
+
+if r2 > 0.85:
+    st.success("✅ Model sangat baik (reliable)")
+elif r2 > 0.7:
+    st.warning("⚠️ Model cukup baik")
+else:
+    st.error("❌ Model kurang akurat")
+
+# =========================================================
+# RANGE TRAINING
+# =========================================================
+range_dict = {col: (df[col].min(), df[col].max()) for col in features}
+
+# =========================================================
 # INPUT FORM
 # =========================================================
 st.subheader("🎛️ Input Parameter Operasi")
 
-with st.form("input_form"):
+with st.form("form_input"):
 
     col1, col2, col3 = st.columns(3)
 
@@ -98,7 +126,7 @@ with st.form("input_form"):
         fdf_a_vane = st.number_input("FDF A Vane (%)", value=None)
         fdf_b_vane = st.number_input("FDF B Vane (%)", value=None)
 
-    st.markdown("### 🔧 IDF Damper Existing")
+    st.markdown("### 🔧 IDF Existing")
     col4, col5 = st.columns(2)
 
     with col4:
@@ -107,7 +135,7 @@ with st.form("input_form"):
     with col5:
         idf_b_vane_input = st.number_input("IDF B Vane (%)", value=None)
 
-    submit = st.form_submit_button("🚀 Jalankan Optimasi")
+    submit = st.form_submit_button("🚀 Jalankan Prediksi & Optimasi")
 
 # =========================================================
 # PROCESS
@@ -122,7 +150,7 @@ if submit:
     ]
 
     if any(v is None for v in inputs):
-        st.error("⚠️ Semua parameter harus diisi!")
+        st.error("⚠️ Semua input harus diisi!")
         st.stop()
 
     input_data = pd.DataFrame([{
@@ -135,17 +163,47 @@ if submit:
         "fdf_b_vane": fdf_b_vane
     }])
 
-    # =========================
+    # =====================================================
+    # VALIDASI RANGE INPUT
+    # =====================================================
+    out_of_range = []
+
+    for col in features:
+        val = input_data[col].values[0]
+        min_val, max_val = range_dict[col]
+
+        if val < min_val or val > max_val:
+            out_of_range.append(col)
+
+    if out_of_range:
+        st.warning(f"⚠️ Input di luar range training: {out_of_range}")
+
+    # =====================================================
     # PREDIKSI FP
-    # =========================
+    # =====================================================
     pred_fp = model_fp.predict(input_data)[0]
 
-    st.subheader("📊 Furnace Pressure")
-    st.metric("Prediksi FP", round(pred_fp, 2))
+    st.subheader("📊 Hasil Prediksi")
+    st.metric("Furnace Pressure", round(pred_fp, 2))
 
-    # =========================
-    # OPTIMASI A & B
-    # =========================
+    if pred_fp > -50:
+        st.error("⚠️ Pressure terlalu positif")
+    elif pred_fp < -200:
+        st.warning("⚠️ Pressure terlalu negatif")
+    else:
+        st.success("✅ Normal")
+
+    # =====================================================
+    # CONFIDENCE
+    # =====================================================
+    st.subheader("🧠 Confidence")
+
+    confidence = max(0, 100 - (mae * 2))
+    st.metric("Confidence (%)", round(confidence, 1))
+
+    # =====================================================
+    # OPTIMASI IDF A & B
+    # =====================================================
     best_score = 999
     best_a = None
     best_b = None
@@ -155,21 +213,19 @@ if submit:
 
             temp = input_data.copy()
 
-            # simulasi current
             if idf_a_vane_input != 0:
                 temp["idf_a_current"] = idf_a_current * (a / idf_a_vane_input)
 
             if idf_b_vane_input != 0:
                 temp["idf_b_current"] = idf_b_current * (b / idf_b_vane_input)
 
-            pred_fp_sim = model_fp.predict(temp)[0]
+            pred_sim = model_fp.predict(temp)[0]
 
-            penalty = abs(pred_fp_sim + 100) * 2
+            penalty = abs(pred_sim + 100) * 2
 
-            if pred_fp_sim > -50:
+            if pred_sim > -50:
                 penalty += 300
 
-            # balance A & B
             penalty += abs(a - b) * 0.5
 
             if penalty < best_score:
@@ -177,28 +233,12 @@ if submit:
                 best_a = a
                 best_b = b
 
-    # =========================
-    # OUTPUT
-    # =========================
     st.subheader("🎯 Rekomendasi Optimal")
 
     colA, colB = st.columns(2)
 
     with colA:
-        st.metric("IDF A Optimal (%)", round(best_a, 2))
+        st.metric("IDF A (%)", round(best_a, 2))
 
     with colB:
-        st.metric("IDF B Optimal (%)", round(best_b, 2))
-
-# =========================================================
-# VISUAL
-# =========================================================
-st.subheader("📈 Historis")
-
-fig, ax = plt.subplots()
-ax.scatter(df["idf_a_vane"], df["fp"], alpha=0.3)
-ax.set_xlabel("IDF A Vane")
-ax.set_ylabel("Furnace Pressure")
-ax.grid()
-
-st.pyplot(fig)
+        st.metric("IDF B (%)", round(best_b, 2))

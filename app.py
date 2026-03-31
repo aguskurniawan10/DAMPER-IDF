@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
 
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import r2_score, mean_absolute_error
@@ -11,7 +10,7 @@ from sklearn.ensemble import RandomForestRegressor
 # CONFIG
 # =========================================================
 st.set_page_config(page_title="IDF Optimizer AI", layout="wide")
-st.title("🔥 IDF Optimization + Furnace Pressure (FINAL FIXED)")
+st.title("🔥 IDF Optimization (Dual Model - Physics Aware)")
 
 # =========================================================
 # LOAD DATA
@@ -47,34 +46,11 @@ def preprocess(df):
     df = df.dropna()
     df = df.sort_values("time")
 
-    # stabil
+    # filter stabil
     df["load_diff"] = df["load"].diff().abs()
     df["fp_diff"] = df["fp"].diff().abs()
     df = df[(df["load_diff"] < 2) & (df["fp_diff"] < 25)]
 
-    # outlier
-    q1 = df["fp"].quantile(0.05)
-    q2 = df["fp"].quantile(0.95)
-    df = df[(df["fp"] > q1) & (df["fp"] < q2)]
-
-    # smooth
-    df["fp_smooth"] = df["fp"].rolling(3).mean()
-
-    # feature
-    df["total_idf_current"] = df["idf_a_current"] + df["idf_b_current"]
-    df["idf_total_vane"] = df["idf_a_vane"] + df["idf_b_vane"]
-    df["airflow_per_load"] = df["airflow"] / df["load"]
-    df["air_per_idf"] = df["airflow"] / (df["idf_total_vane"] + 1)
-    df["current_ratio"] = df["idf_a_current"] / (df["idf_b_current"] + 1)
-    df["fdf_avg"] = (df["fdf_a_vane"] + df["fdf_b_vane"]) / 2
-    df["air_x_pa"] = df["airflow"] * df["pa_pressure"]
-
-    # lag
-    for col in ["fp_smooth","airflow","idf_a_current","idf_b_current"]:
-        df[f"{col}_lag1"] = df[col].shift(1)
-        df[f"{col}_lag2"] = df[col].shift(2)
-
-    df = df.dropna()
     return df
 
 df = preprocess(df)
@@ -82,57 +58,74 @@ df = preprocess(df)
 st.success(f"Data siap: {df.shape}")
 
 # =========================================================
-# FEATURES
+# 🔥 MODEL 1: DAMPER → AIRFLOW
 # =========================================================
-features = [
-    "load","airflow","pa_pressure",
-    "idf_a_current","idf_b_current",
-    "fdf_a_vane","fdf_b_vane",
-    "total_idf_current","idf_total_vane",
-    "airflow_per_load","air_per_idf",
-    "current_ratio","fdf_avg","air_x_pa",
-    "fp_smooth_lag1","fp_smooth_lag2",
-    "airflow_lag1","idf_a_current_lag1","idf_b_current_lag1"
+df["idf_total_vane"] = df["idf_a_vane"] + df["idf_b_vane"]
+
+features_air = [
+    "idf_total_vane",
+    "load",
+    "pa_pressure"
 ]
 
-X = df[features]
-y = df["fp_smooth"]
+X_air = df[features_air]
+y_air = df["airflow"]
 
-# =========================================================
-# TRAIN MODEL
-# =========================================================
-X_train, X_test, y_train, y_test = train_test_split(
-    X, y, test_size=0.2, random_state=42
+X_train_a, X_test_a, y_train_a, y_test_a = train_test_split(
+    X_air, y_air, test_size=0.2, random_state=42
 )
 
-model = RandomForestRegressor(
-    n_estimators=400,
-    max_depth=18,
-    min_samples_split=4,
-    random_state=42
+model_air = RandomForestRegressor(n_estimators=200, max_depth=12)
+model_air.fit(X_train_a, y_train_a)
+
+pred_air = model_air.predict(X_test_a)
+
+r2_air = r2_score(y_test_a, pred_air)
+
+# =========================================================
+# 🔥 MODEL 2: AIRFLOW → FP
+# =========================================================
+features_fp = [
+    "airflow",
+    "load",
+    "idf_a_current",
+    "idf_b_current",
+    "pa_pressure",
+    "fdf_a_vane",
+    "fdf_b_vane"
+]
+
+X_fp = df[features_fp]
+y_fp = df["fp"]
+
+X_train_f, X_test_f, y_train_f, y_test_f = train_test_split(
+    X_fp, y_fp, test_size=0.2, random_state=42
 )
 
-model.fit(X_train, y_train)
+model_fp = RandomForestRegressor(n_estimators=300, max_depth=15)
+model_fp.fit(X_train_f, y_train_f)
 
-pred = model.predict(X_test)
+pred_fp = model_fp.predict(X_test_f)
 
-r2 = r2_score(y_test, pred)
-mae = mean_absolute_error(y_test, pred)
+r2_fp = r2_score(y_test_f, pred_fp)
 
+# =========================================================
+# PERFORMANCE
+# =========================================================
 st.subheader("📊 Model Performance")
+
 col1, col2 = st.columns(2)
-col1.metric("R2", round(r2, 3))
-col2.metric("MAE", round(mae, 2))
+col1.metric("R2 Airflow Model", round(r2_air, 3))
+col2.metric("R2 FP Model", round(r2_fp, 3))
 
 # =========================================================
-# INPUT FORM
+# INPUT
 # =========================================================
 st.subheader("🎛️ Input Parameter")
 
 with st.form("form"):
 
     load = st.number_input("Load", value=300.0)
-    airflow = st.number_input("Airflow", value=900.0)
     pa_pressure = st.number_input("PA Pressure", value=7.0)
 
     idf_a_current = st.number_input("IDF A Current", value=200.0)
@@ -141,105 +134,95 @@ with st.form("form"):
     fdf_a_vane = st.number_input("FDF A Vane", value=45.0)
     fdf_b_vane = st.number_input("FDF B Vane", value=45.0)
 
-    idf_a_vane_input = st.number_input("IDF A Vane Existing", value=95.0)
-    idf_b_vane_input = st.number_input("IDF B Vane Existing", value=95.0)
+    idf_a_vane_input = st.number_input("IDF A Vane", value=95.0)
+    idf_b_vane_input = st.number_input("IDF B Vane", value=95.0)
 
     submit = st.form_submit_button("🚀 Run")
-
-# =========================================================
-# BUILD INPUT
-# =========================================================
-def build_input():
-
-    data = pd.DataFrame([{
-        "load": load,
-        "airflow": airflow,
-        "pa_pressure": pa_pressure,
-        "idf_a_current": idf_a_current,
-        "idf_b_current": idf_b_current,
-        "fdf_a_vane": fdf_a_vane,
-        "fdf_b_vane": fdf_b_vane
-    }])
-
-    data["total_idf_current"] = idf_a_current + idf_b_current
-    data["idf_total_vane"] = idf_a_vane_input + idf_b_vane_input
-    data["airflow_per_load"] = airflow / load
-    data["air_per_idf"] = airflow / (data["idf_total_vane"] + 1)
-    data["current_ratio"] = idf_a_current / (idf_b_current + 1)
-    data["fdf_avg"] = (fdf_a_vane + fdf_b_vane) / 2
-    data["air_x_pa"] = airflow * pa_pressure
-
-    data["fp_smooth_lag1"] = -100
-    data["fp_smooth_lag2"] = -100
-    data["airflow_lag1"] = airflow
-    data["idf_a_current_lag1"] = idf_a_current
-    data["idf_b_current_lag1"] = idf_b_current
-
-    return data
 
 # =========================================================
 # PROCESS
 # =========================================================
 if submit:
 
-    input_data = build_input()
+    # =====================
+    # CURRENT AIRFLOW
+    # =====================
+    total_vane_now = idf_a_vane_input + idf_b_vane_input
+
+    airflow_now = model_air.predict(pd.DataFrame([{
+        "idf_total_vane": total_vane_now,
+        "load": load,
+        "pa_pressure": pa_pressure
+    }]))[0]
 
     # =====================
-    # PREDIKSI
+    # CURRENT FP
     # =====================
-    pred_fp = model.predict(input_data)[0]
+    fp_now = model_fp.predict(pd.DataFrame([{
+        "airflow": airflow_now,
+        "load": load,
+        "idf_a_current": idf_a_current,
+        "idf_b_current": idf_b_current,
+        "pa_pressure": pa_pressure,
+        "fdf_a_vane": fdf_a_vane,
+        "fdf_b_vane": fdf_b_vane
+    }]))[0]
 
-    st.subheader("📊 Furnace Pressure")
-    st.metric("FP (Predicted)", round(pred_fp, 2))
+    st.subheader("📊 Kondisi Saat Ini")
+    st.metric("Airflow", round(airflow_now, 2))
+    st.metric("Furnace Pressure", round(fp_now, 2))
 
-    # =====================
-    # OPTIMIZER (FIXED)
-    # =====================
+    # =====================================================
+    # 🔥 OPTIMIZER (REAL WORKING)
+    # =====================================================
     st.subheader("🎯 Rekomendasi Damper")
 
     target_fp = -100
 
     best_score = 999
-    best_a, best_b, best_fp = None, None, None
+    best_total = None
+    best_fp = None
 
-    for a in np.linspace(40, 95, 20):
-        for b in np.linspace(40, 95, 20):
+    for total in np.linspace(80, 180, 50):
 
-            temp = build_input()
+        # airflow dari model
+        airflow_sim = model_air.predict(pd.DataFrame([{
+            "idf_total_vane": total,
+            "load": load,
+            "pa_pressure": pa_pressure
+        }]))[0]
 
-            # current
-            temp["idf_a_current"] = idf_a_current * (a / idf_a_vane_input)
-            temp["idf_b_current"] = idf_b_current * (b / idf_b_vane_input)
+        # split damper
+        a = total / 2
+        b = total / 2
 
-            # 🔥 airflow berubah (kunci)
-            airflow_sim = airflow * ((a + b) / (idf_a_vane_input + idf_b_vane_input))
+        # current scaling
+        idf_a_cur = idf_a_current * (a / idf_a_vane_input)
+        idf_b_cur = idf_b_current * (b / idf_b_vane_input)
 
-            temp["airflow"] = airflow_sim
-            temp["airflow_per_load"] = airflow_sim / load
-            temp["air_x_pa"] = airflow_sim * pa_pressure
-            temp["air_per_idf"] = airflow_sim / (a + b + 1)
+        # FP prediction
+        pred_sim = model_fp.predict(pd.DataFrame([{
+            "airflow": airflow_sim,
+            "load": load,
+            "idf_a_current": idf_a_cur,
+            "idf_b_current": idf_b_cur,
+            "pa_pressure": pa_pressure,
+            "fdf_a_vane": fdf_a_vane,
+            "fdf_b_vane": fdf_b_vane
+        }]))[0]
 
-            temp["total_idf_current"] = temp["idf_a_current"] + temp["idf_b_current"]
-            temp["idf_total_vane"] = a + b
-            temp["current_ratio"] = temp["idf_a_current"] / (temp["idf_b_current"] + 1)
+        penalty = abs(pred_sim - target_fp)
 
-            temp["fp_smooth_lag1"] = pred_fp
-            temp["fp_smooth_lag2"] = pred_fp
+        if pred_sim > -50:
+            penalty += 1000
 
-            pred_sim = model.predict(temp)[0]
+        if penalty < best_score:
+            best_score = penalty
+            best_total = total
+            best_fp = pred_sim
 
-            penalty = abs(pred_sim - target_fp) * 4
-
-            if pred_sim > -50:
-                penalty += 1000
-
-            penalty += abs(a - b) * 0.3
-
-            if penalty < best_score:
-                best_score = penalty
-                best_a = a
-                best_b = b
-                best_fp = pred_sim
+    best_a = best_total / 2
+    best_b = best_total / 2
 
     colA, colB, colC = st.columns(3)
 

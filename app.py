@@ -98,7 +98,7 @@ st.subheader("🎛️ Input Parameter Operasi")
 with st.form("form_input"):
     col_l, col_p = st.columns(2)
     load        = col_l.number_input("Load (MW)",          value=300.0, step=1.0)
-    pa_pressure = col_p.number_input("PA Pressure (mmWC)", value=7.0,   step=0.1)
+    pa_pressure = col_p.number_input("PA Pressure (KPA)", value=7.0,   step=0.1)
 
     st.markdown("**IDF Parameter**")
     c1, c2, c3, c4 = st.columns(4)
@@ -142,11 +142,11 @@ if submit:
     m1, m2, m3 = st.columns(3)
     m1.metric("IDF A Vane",               f"{idf_a_vane_now:.1f} %")
     m2.metric("IDF B Vane",               f"{idf_b_vane_now:.1f} %")
-    m3.metric("Furnace Pressure (prediksi)", f"{fp_now:.1f} mmWC")
+    m3.metric("Furnace Pressure (prediksi)", f"{fp_now:.1f} Pa")
 
     # ---------- Optimizer: 2D grid search ----------
     st.subheader("🎯 Rekomendasi Bukaan Damper IDF")
-    st.caption("Target Furnace Pressure: **-100 s/d -150 mmWC**")
+    st.caption("Target Furnace Pressure: **-100 s/d -150 Pa**")
 
     FP_LOW  = -150   # batas bawah
     FP_HIGH = -100   # batas atas
@@ -206,7 +206,7 @@ if submit:
                     "IDF B Vane (%)":     "{:.0f}",
                     "Prediksi FP (mmWC)": "{:.1f}"
                 })
-                .background_gradient(subset=["Prediksi FP (mmWC)"], cmap="RdYlGn_r"),
+                .background_gradient(subset=["Prediksi FP (Pa)"], cmap="RdYlGn_r"),
             use_container_width=True
         )
 
@@ -215,16 +215,16 @@ if submit:
             f"✅ **Rekomendasi Terbaik** — "
             f"IDF A Vane: **{best['IDF A Vane (%)']:.0f}%** | "
             f"IDF B Vane: **{best['IDF B Vane (%)']:.0f}%** | "
-            f"Prediksi FP: **{best['Prediksi FP (mmWC)']:.1f} mmWC**"
+            f"Prediksi FP: **{best['Prediksi FP (Pa)']:.1f} Pa**"
         )
 
         st.info(
             f"Ditemukan **{len(res_df)}** kombinasi damper yang memenuhi target FP -100 s/d -150 mmWC. "
-            f"Tabel menampilkan **Top 10** — diurutkan berdasarkan kedekatan FP ke titik tengah target (-125 mmWC)."
+            f"Tabel menampilkan **Top 10** — diurutkan berdasarkan kedekatan FP ke titik tengah target (-125 Pa)."
         )
 
     else:
         st.warning(
-            "⚠️ Tidak ditemukan kombinasi damper yang menghasilkan FP dalam rentang -100 s/d -150 mmWC "
+            "⚠️ Tidak ditemukan kombinasi damper yang menghasilkan FP dalam rentang -100 s/d -150 Pa "
             "pada kondisi operasi ini. Coba sesuaikan nilai FDF Vane atau PA Pressure."
         )

@@ -219,7 +219,7 @@ if submit:
         )
 
         st.info(
-            f"Ditemukan **{len(res_df)}** kombinasi damper yang memenuhi target FP -100 s/d -150 mmWC. "
+            f"Ditemukan **{len(res_df)}** kombinasi damper yang memenuhi target FP -100 s/d -150 Pa. "
             f"Tabel menampilkan **Top 10** — diurutkan berdasarkan kedekatan FP ke titik tengah target (-125 Pa)."
         )
 

@@ -183,7 +183,7 @@ if submit:
                 results.append({
                     "IDF A Vane (%)":      a,
                     "IDF B Vane (%)":      b,
-                    "Prediksi FP (mmWC)":  round(fp_sim, 1),
+                    "Prediksi FP (Pa)":  round(fp_sim, 1),
                     "_score":              score
                 })
 
